@@ -1,8 +1,44 @@
 [package]
 name = "PingPongzzz"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+# Async runtime & networking
+tokio = { version = "1.43", features = ["full"] }
+futures = "0.3"
+socket2 = "0.5"
+
+# Cryptography & Security (FR-SEC-01 to FR-SEC-05)
+ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets", "serde"] }
+snow = "0.9"
+chacha20poly1305 = "0.10"
+sha2 = "0.10"
+rand = "0.8"
+hex = "0.4"
+
+# Identity & System (FR-ID-01, FR-ID-03)
 hostname = "0.4"
+
+# Discovery (FR-PD-01)
+mdns-sd = "0.13"
+
+# Database & Serialization (FR-DB-01 to FR-DB-05)
 rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+uuid = { version = "1.12", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Desktop GUI (FR-UI-01 to FR-UI-05)
+eframe = "0.30"
+egui = "0.30"
+
+# Notifications (FR-NOT-01 to FR-NOT-03)
+notify-rust = "4.11"
+
+# Logging & Diagnostics
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
