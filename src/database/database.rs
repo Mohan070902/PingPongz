@@ -10,10 +10,63 @@ pub struct Database;
 impl Database {
     pub const DEFAULT_DB_PATH: &'static str = "pingpongzzz.db";
 
+    /// Resolves the database file path safely, ensuring writable storage regardless of current working directory
+    pub fn resolve_db_path() -> std::path::PathBuf {
+        // 1. Explicit override via env var
+        if let Ok(path) = std::env::var("PINGPONGZZZ_DB") {
+            return std::path::PathBuf::from(path);
+        }
+
+        // 2. Check if a local project database exists and is accessible
+        let project_db = std::path::PathBuf::from("/mnt/e/Projects/PingPongzzz/pingpongzzz.db");
+        if project_db.exists() {
+            return project_db;
+        }
+
+        // 3. Check current working directory if not a protected system path
+        if let Ok(cur_dir) = std::env::current_dir() {
+            let cur_str = cur_dir.to_string_lossy();
+            let is_system_dir = cur_str.contains("/Windows/") || cur_str.contains("\\Windows\\") || cur_str == "/";
+            if !is_system_dir {
+                let test_file = cur_dir.join(".pingpongzzz_write_test");
+                if std::fs::write(&test_file, b"").is_ok() {
+                    let _ = std::fs::remove_file(&test_file);
+                    return cur_dir.join(Self::DEFAULT_DB_PATH);
+                }
+            }
+        }
+
+        // 4. User data directory in Linux / WSL
+        if let Ok(home) = std::env::var("HOME") {
+            let data_dir = std::path::PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("pingpongzzz");
+            let _ = std::fs::create_dir_all(&data_dir);
+            return data_dir.join(Self::DEFAULT_DB_PATH);
+        }
+
+        // 5. Windows AppData fallback
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let data_dir = std::path::PathBuf::from(appdata).join("PingPongzzz");
+            let _ = std::fs::create_dir_all(&data_dir);
+            return data_dir.join(Self::DEFAULT_DB_PATH);
+        }
+
+        std::path::PathBuf::from(Self::DEFAULT_DB_PATH)
+    }
+
     /// Initialize SQLite connection, enable WAL mode, perform integrity check (FR-DB-01, FR-DB-06, FR-DB-07)
     pub fn initialize_with_path<P: AsRef<Path>>(path: P) -> Result<Connection> {
         let path = path.as_ref();
         info!("Opening SQLite database at {:?}", path);
+
+        // Ensure parent directory exists if path has parents
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
 
         // Pre-flight check: if database file exists, run integrity check
         if path.exists() {
@@ -37,7 +90,7 @@ impl Database {
     }
 
     pub fn initialize() -> Result<Connection> {
-        Self::initialize_with_path(Self::DEFAULT_DB_PATH)
+        Self::initialize_with_path(Self::resolve_db_path())
     }
 
     /// FR-DB-06: On startup, run PRAGMA integrity_check on the local database
