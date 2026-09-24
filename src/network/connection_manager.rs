@@ -9,7 +9,7 @@ use crate::crypto::noise::{NoiseHandshake, NoiseSession};
 use crate::crypto::CryptoKeys;
 use crate::discovery::PeerTracker;
 use crate::identity::IdentityManager;
-use crate::models::Message;
+use crate::models::{Message, MessageStatus};
 use crate::network::framed::{FramedReader, FramedWriter};
 use crate::network::protocol::{
     TransportPacket, WireMessagePayload, PACKET_HANDSHAKE_1, PACKET_HANDSHAKE_2,
@@ -29,6 +29,7 @@ struct ActiveConn {
 
 pub enum NetworkEvent {
     MessageReceived(Message),
+    MessageStatusUpdated(String, MessageStatus),
     PeerOnline(String),
     PeerOffline(String),
 }
@@ -447,6 +448,18 @@ impl ConnectionManager {
         peer_fingerprint: &str,
         message: Message,
     ) -> Result<(), &'static str> {
+        let msg_id = message.msg_id.clone();
+
+        // If not yet connected, attempt on-demand connection first
+        let is_connected = {
+            let conns = self.connections.lock().await;
+            conns.contains_key(peer_fingerprint)
+        };
+
+        if !is_connected {
+            let _ = self.connect_to_peer_if_needed(peer_fingerprint).await;
+        }
+
         let conns = self.connections.lock().await;
         if let Some(conn) = conns.get(peer_fingerprint) {
             let payload = WireMessagePayload {
@@ -456,15 +469,33 @@ impl ConnectionManager {
                 content: message.content,
             };
 
-            conn.tx
+            let res = conn
+                .tx
                 .send(TransportPacket::Message(payload))
                 .await
-                .map_err(|_| "Failed to write to peer channel")?;
+                .map_err(|_| "Failed to write to peer channel");
 
-            Ok(())
+            let status = match res {
+                Ok(()) => MessageStatus::Sent,
+                Err(_) => MessageStatus::Failed,
+            };
+
+            let _ = self
+                .event_tx
+                .send(NetworkEvent::MessageStatusUpdated(msg_id, status))
+                .await;
+
+            res
         } else {
             // FR-MSG-08: If the recipient peer is Offline, reject the send immediately
             // with no queueing, no offline storage, and no auto-retry.
+            let _ = self
+                .event_tx
+                .send(NetworkEvent::MessageStatusUpdated(
+                    msg_id,
+                    MessageStatus::Failed,
+                ))
+                .await;
             Err("Recipient peer is offline")
         }
     }

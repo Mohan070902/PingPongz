@@ -158,6 +158,13 @@ impl eframe::App for PingPongApp {
                             is_window_focused,
                         );
                     }
+                    NetworkEvent::MessageStatusUpdated(msg_id, status) => {
+                        let conn = self.db.lock().unwrap();
+                        let _ = Database::update_message_status(&conn, &msg_id, status);
+                        if let Some(msg) = self.active_messages.iter_mut().find(|m| m.msg_id == msg_id) {
+                            msg.status = status;
+                        }
+                    }
                     NetworkEvent::PeerOnline(fp) => {
                         let conn = self.db.lock().unwrap();
                         self.peer_tracker
@@ -297,34 +304,12 @@ impl eframe::App for PingPongApp {
                         self.active_messages.push(msg.clone());
 
                         let conn_mgr = self.conn_mgr.clone();
-                        let db_clone = Arc::clone(&self.db);
                         let msg_clone = msg.clone();
                         let target_fp = peer_fp.clone();
 
                         tokio::spawn(async move {
-                            // FR-MSG-07 & FR-MSG-08
-                            match conn_mgr.send_message(&target_fp, msg_clone.clone()).await {
-                                Ok(()) => {
-                                    // FR-MSG-05: Mark message SENT once TCP write succeeds
-                                    info!("Message {} sent successfully to {}", msg_clone.msg_id, target_fp);
-                                    let conn = db_clone.lock().unwrap();
-                                    let _ = Database::update_message_status(
-                                        &conn,
-                                        &msg_clone.msg_id,
-                                        MessageStatus::Sent,
-                                    );
-                                }
-                                Err(e) => {
-                                    // FR-MSG-06: Mark message FAILED on TCP write failure or offline
-                                    warn!("Message send failed to {}: {}", target_fp, e);
-                                    let conn = db_clone.lock().unwrap();
-                                    let _ = Database::update_message_status(
-                                        &conn,
-                                        &msg_clone.msg_id,
-                                        MessageStatus::Failed,
-                                    );
-                                }
-                            }
+                            // FR-MSG-07 & FR-MSG-08: ConnectionManager handles status events
+                            let _ = conn_mgr.send_message(&target_fp, msg_clone).await;
                         });
                     }
                     Err(e) => {
@@ -342,27 +327,9 @@ impl eframe::App for PingPongApp {
                     let msg_to_send = existing.clone();
                     let target_fp = peer_fp.clone();
                     let conn_mgr = self.conn_mgr.clone();
-                    let db_clone = Arc::clone(&self.db);
 
                     tokio::spawn(async move {
-                        match conn_mgr.send_message(&target_fp, msg_to_send.clone()).await {
-                            Ok(()) => {
-                                let conn = db_clone.lock().unwrap();
-                                let _ = Database::update_message_status(
-                                    &conn,
-                                    &msg_to_send.msg_id,
-                                    MessageStatus::Sent,
-                                );
-                            }
-                            Err(_) => {
-                                let conn = db_clone.lock().unwrap();
-                                let _ = Database::update_message_status(
-                                    &conn,
-                                    &msg_to_send.msg_id,
-                                    MessageStatus::Failed,
-                                );
-                            }
-                        }
+                        let _ = conn_mgr.send_message(&target_fp, msg_to_send).await;
                     });
                 }
             }
